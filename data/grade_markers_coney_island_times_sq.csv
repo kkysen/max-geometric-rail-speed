@@ -1,0 +1,19 @@
+# Grade breakpoints for the Coney Island-Stillwell Av -> Times Sq-42 St route.
+# chainage_km,grade_pct: grade holds constant from this chainage until the next row.
+#
+# Source: subs.nyc ("SUBWAYS_IO", by Calcagno Maps / NYRTIG), https://map.subs.nyc/data.js,
+# const GRADES, division B1, chains A and H, route "MBX" ("Manhattan Bridge [c]rossing"):
+# Manhattan Bridge North Approach (chain A, zero 57th & 7th): grade 4.82-5.40 at markers
+# 207+10/211+20/269+30/271+20/275+80. Manhattan Bridge South Approach (chain H, zero
+# Chambers): grade 4.97-5.30 at markers 35+40/39+12/41+50. Simplified here to a single
+# representative +-5.1% "hump" over the route's ~1.05 mi straight-line bridge span
+# (data/track_coney_island_times_sq.geojson has no real curvature/elevation there --
+# see README "Known limitations"). Sign (climb then descend) is inferred from the known
+# physical profile -- tunnel level in Brooklyn, up onto the elevated bridge deck, back
+# down into the Canal St tunnel in Manhattan -- not encoded in the source, which gives
+# magnitude only. Everywhere else on the route defaults to flat (no grade data available).
+chainage_km,grade_pct
+0.0,0.0
+17.08,5.1
+17.94,-5.1
+18.77,0.0
