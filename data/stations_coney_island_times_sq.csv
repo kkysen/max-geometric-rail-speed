@@ -1,8 +1,8 @@
 name,lat,lon,stop
 Coney Island-Stillwell Av,40.577422,-73.981233,1
-W 8 St-NY Aquarium,40.576127,-73.975939,0
-Ocean Pkwy,40.576312,-73.968501,0
-Brighton Beach,40.577621,-73.961376,0
+W 8 St-NY Aquarium,40.576127,-73.975939,1
+Ocean Pkwy,40.576312,-73.968501,1
+Brighton Beach,40.577621,-73.961376,1
 Sheepshead Bay,40.586896,-73.954155,1
 Neck Rd,40.595246,-73.955161,0
 Avenue U,40.5993,-73.955929,0
@@ -16,8 +16,8 @@ Beverley Rd,40.644031,-73.964492,0
 Church Av,40.650527,-73.962982,1
 Parkside Av,40.655292,-73.961495,0
 Prospect Park,40.661614,-73.962246,1
-7 Av,40.67705,-73.972367,0
-Atlantic Av-Barclays Ctr,40.68446,-73.97689,0
+7 Av,40.67705,-73.972367,1
+Atlantic Av-Barclays Ctr,40.68446,-73.97689,1
 DeKalb Av,40.690635,-73.981824,1
 Canal St,40.718383,-74.00046,1
 14 St-Union Sq,40.735736,-73.990568,1
