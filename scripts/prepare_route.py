@@ -55,9 +55,17 @@ STATION_ORDER = [
 ]
 Q_LINES = {"Broadway - Brighton", "Manhattan Bridge", "Sea Beach / West End / Culver / Brighton"}
 
-# Brighton EXPRESS (not local): skips these 4 local-only stations on the
-# 4-track section between Prospect Park and Newkirk Plaza.
-EXPRESS_SKIP = {"Beverley Rd", "Cortelyou Rd", "Avenue H", "Avenue J"}
+# Brighton EXPRESS (not local): skips every station subs.nyc's per-station
+# "stype" field (const RAW_B1["A"], https://map.subs.nyc/data.js) classifies
+# as "Local" rather than "Express" -- a skip-stop pattern, not just the 4
+# stations on the Prospect Park/Newkirk Plaza 4-track express-track section.
+# The remaining Express stops in Brooklyn are just Sheepshead Bay, Kings Hwy,
+# Newkirk Plaza, Church Av, Prospect Park, and DeKalb Av.
+EXPRESS_SKIP = {
+    "W 8 St-NY Aquarium", "Ocean Pkwy", "Brighton Beach", "Neck Rd", "Avenue U",
+    "Avenue M", "Avenue J", "Avenue H", "Cortelyou Rd", "Beverley Rd",
+    "Parkside Av", "7 Av", "Atlantic Av-Barclays Ctr",
+}
 
 
 def load_stations() -> list[dict]:
