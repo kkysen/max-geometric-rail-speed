@@ -949,7 +949,8 @@ for k, st in enumerate(stations):
         d = "--"
     else:
         d = clock(BASE1, arr1[k] + (DWELL if st["stop"] else 0))
-    print(f"  {st['name']:<24} {st['km']:>8.2f} {a:>7} {d:>7}")
+    kind = "" if first or last or st["stop"] else "  (pass)"
+    print(f"  {st['name']:<24} {st['km']:>8.2f} {a:>7} {d:>7}{kind}")
 
 print(f"\n  TRAIN 2  departs {CONFIG['dep_hhmm_t2']}")
 print("  " + "-" * (len(hdr) - 2))
@@ -964,7 +965,8 @@ for k, st in enumerate(rev_stations):
         d = "--"
     else:
         d = clock(BASE2, arr2[k] + (DWELL if st["stop"] else 0))
-    print(f"  {st['name']:<24} {st['km']:>8.2f} {a:>7} {d:>7}")
+    kind = "" if first or last or st["stop"] else "  (pass)"
+    print(f"  {st['name']:<24} {st['km']:>8.2f} {a:>7} {d:>7}{kind}")
 
 
 # ------------------------------------------------------------
