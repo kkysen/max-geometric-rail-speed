@@ -122,7 +122,9 @@ GRADE CONVENTION
 #     elsewhere as 625V); not used by this model, noted for context only
 # Cant/deficiency: NYCT trackage generally uses little to no superelevation;
 # 75 mm / 75 mm (~3 in / 3 in) is a rough approximation, not a cited standard.
-CONFIG = {
+from typing import Any, TypedDict
+
+CONFIG: dict[str, Any] = {
     # --- Input ---
     "track_geojson":    "data/track_coney_island_times_sq.geojson",
     "stations_csv":     "data/stations_coney_island_times_sq.csv",
@@ -211,7 +213,7 @@ class Route(str, Enum):
 
 
 # route -> (human-readable title, run_label)
-ROUTE_META = {
+ROUTE_META: dict[Route, tuple[str, str]] = {
     Route.coney_island_times_sq: ("Coney Island-Stillwell Av to Times Sq-42 St", "ConeyIsland_TimesSq"),
     Route.dekalb_times_sq: ("DeKalb Av to Times Sq-42 St", "DeKalb_TimesSq"),
     Route.dekalb_bryant_park: ("DeKalb Av to 42 St-Bryant Pk", "DeKalb_BryantPark"),
@@ -223,7 +225,7 @@ def _select_route(
         Route.coney_island_times_sq,
         help="Which of scripts/prepare_route.py's prepared routes to run.",
     ),
-):
+) -> None:
     """Run the geometric-potential timetable model for one route."""
     # Just points CONFIG's input/output paths at the chosen route; the rest
     # of this module runs top to bottom afterward, like the original QGIS
@@ -256,13 +258,42 @@ print("organizational use: please contact the original author first.")
 print("=" * 64)
 
 G = 9.81
-WARNINGS = []
+WARNINGS: list[tuple[str, str]] = []
+
+
+class Segment(TypedDict):
+    points: list[tuple[float, float]]
+    len_m: float
+    start: tuple[float, float]
+    end: tuple[float, float]
+
+
+class Station(TypedDict):
+    name: str
+    idx: int
+    km: float
+    offset_m: float
+    stop: bool
+
+
+class Curve(TypedDict):
+    i0: int
+    i1: int
+    imin: int
+    track_lon: float
+    track_lat: float
+    start_km: float
+    end_km: float
+    length_m: float
+    min_r: float
+    perm_kmh: float
+    loss_s: float
 
 
 # ------------------------------------------------------------
 # 0. Config validation - fail fast, before any computation
 # ------------------------------------------------------------
-_errors = []
+_errors: list[str] = []
 
 _geojson = CONFIG["track_geojson"]
 if not os.path.isfile(_geojson):
@@ -333,12 +364,12 @@ else:
     print("  Config OK -> no output_dir set, nothing will be written")
 
 
-def warn(kind, msg):
+def warn(kind: str, msg: str) -> None:
     WARNINGS.append((kind, msg))
     print(f"  [!] {kind}: {msg}")
 
 
-def hav(p1, p2):
+def hav(p1: tuple[float, float], p2: tuple[float, float]) -> float:
     lo1, la1 = math.radians(p1[0]), math.radians(p1[1])
     lo2, la2 = math.radians(p2[0]), math.radians(p2[1])
     dlo = lo2 - lo1
@@ -354,7 +385,7 @@ print(f"\n[1/11] Loading track: {CONFIG['track_geojson']}")
 with open(CONFIG["track_geojson"]) as _fh:
     _gj = json.load(_fh)
 
-segments = []
+segments: list[Segment] = []
 for feat in _gj["features"]:
     geom = feat["geometry"]
     if geom["type"] == "LineString":
@@ -367,8 +398,7 @@ for feat in _gj["features"]:
         pts = [(p[0], p[1]) for p in part if p[0] != 0 or p[1] != 0]
         if len(pts) >= 2:
             L = sum(hav(pts[j], pts[j + 1]) for j in range(len(pts) - 1))
-            segments.append({"points": pts, "len_m": L,
-                             "start": pts[0], "end": pts[-1]})
+            segments.append(Segment(points=pts, len_m=L, start=pts[0], end=pts[-1]))
 
 print(f"  {len(segments)} segments, "
       f"{sum(len(s['points']) for s in segments)} vertices")
@@ -381,13 +411,13 @@ print("\n[2/11] Geometry QA")
 CONN_TOL = 5.0
 
 
-def endpoint_degree(idx, role, segs, tol):
+def endpoint_degree(idx: int, role: str, segs: list[Segment], tol: float) -> int:
     pt = segs[idx]["start"] if role == "start" else segs[idx]["end"]
     return sum(1 for j, s in enumerate(segs)
                if j != idx and (hav(pt, s["start"]) < tol or hav(pt, s["end"]) < tol))
 
 
-spurs = []
+spurs: list[dict[str, Any]] = []
 for i, seg in enumerate(segments):
     cs = endpoint_degree(i, "start", segments, CONN_TOL)
     ce = endpoint_degree(i, "end", segments, CONN_TOL)
@@ -449,7 +479,7 @@ while len(used) < len(segments):
     order.append((best_i, best_rev))
     used.add(best_i)
 
-coords = []
+coords: list[tuple[float, float]] = []
 for k, (si, rv) in enumerate(order):
     pts = segments[si]["points"]
     if rv:
@@ -490,13 +520,13 @@ lon0_deg = float(np.mean([c[0] for c in coords]))
 R_E = 6371000.0
 
 
-def to_xy(lon, lat):
+def to_xy(lon: float, lat: float) -> tuple[float, float]:
     x = R_E * math.radians(lon - lon0_deg) * math.cos(lat0)
     y = R_E * math.radians(lat - math.degrees(lat0))
     return x, y
 
 
-def to_lonlat(x, y):
+def to_lonlat(x: float, y: float) -> tuple[float, float]:
     lon = lon0_deg + math.degrees(x / (R_E * math.cos(lat0)))
     lat = math.degrees(lat0) + math.degrees(y / R_E)
     return lon, lat
@@ -536,15 +566,15 @@ print(f"  {N} points, spline length {spline_m/1000:.2f} km "
 print(f"\n[5/11] Stations: {CONFIG['stations_csv']}")
 
 
-def project_point(lon, lat):
+def project_point(lon: float, lat: float) -> tuple[int, float, float]:
     x, y = to_xy(lon, lat)
     d = np.hypot(xs_r - x, ys_r - y)
     i = int(np.argmin(d))
     return i, float(chain_m[i]), float(d[i])
 
 
-def read_stations():
-    out = []
+def read_stations() -> list[Station]:
+    out: list[Station] = []
     with open(CONFIG["stations_csv"], newline="", encoding="utf-8-sig") as fh:
         for row in csv.DictReader(fh):
             name = row["name"].strip()
@@ -552,8 +582,8 @@ def read_stations():
             lon = float(row["lon"])
             stop = str(row.get("stop", "1")).strip().lower() not in ("0", "false", "no", "pass")
             idx, ch, off = project_point(lon, lat)
-            out.append({"name": name, "idx": idx, "km": ch / 1000.0,
-                        "offset_m": round(off), "stop": stop})
+            out.append(Station(name=name, idx=idx, km=ch / 1000.0,
+                                offset_m=round(off), stop=stop))
     return out
 
 
@@ -637,8 +667,8 @@ if radii.min() < 50:
 print(f"\n[7/11] Grade")
 
 
-def sample_grade_csv(path):
-    breakpoints = []
+def sample_grade_csv(path: str) -> np.ndarray | None:
+    breakpoints: list[tuple[float, float]] = []
     with open(path, newline="", encoding="utf-8-sig") as fh:
         for row in csv.reader(fh):
             if not row or row[0].strip().startswith("#"):
@@ -664,7 +694,7 @@ def sample_grade_csv(path):
     return g
 
 
-grade = None
+grade: np.ndarray | None = None
 if CONFIG.get("grade_csv"):
     grade = sample_grade_csv(CONFIG["grade_csv"])
 if grade is None:
@@ -673,6 +703,7 @@ if grade is None:
     warn("MODEL_LIMITATION", "no real grade profile in use for most of this route; "
                               "flat/constant grade is the largest source of error "
                               "on ungraded stretches")
+assert grade is not None  # narrows for mypy at every later use, incl. inside closures below
 
 
 # ------------------------------------------------------------
@@ -686,7 +717,7 @@ EB = float(CONFIG["cant_base_m"])
 VMAX = CONFIG["v_max_kmh"] / 3.6
 
 
-def v_from_radius(R, cant_mm=CANT, def_mm=ED):
+def v_from_radius(R: float, cant_mm: float = CANT, def_mm: float = ED) -> float:
     if R >= 4000:
         return VMAX
     return min(math.sqrt(max(0.0, R * G * (cant_mm + def_mm) / 1000.0 / EB)), VMAX)
@@ -705,13 +736,13 @@ I_RATE = CONFIG["cant_def_rate_mms"]
 D_GRAD = CONFIG["cant_gradient_mm_m"]
 
 sign = np.sign(kappa_s)
-rev_zones = []
+rev_zones: list[int] = []
 for i in range(1, N):
     if sign[i] != 0 and sign[i - 1] != 0 and sign[i] != sign[i - 1]:
         if radii[max(0, i - 5)] < QUAL and radii[min(N - 1, i + 5)] < QUAL:
             rev_zones.append(i)
 
-clustered = []
+clustered: list[list[int]] = []
 for z in rev_zones:
     if clustered and z - clustered[-1][-1] <= int(300 / STEP):
         clustered[-1].append(z)
@@ -719,7 +750,7 @@ for z in rev_zones:
         clustered.append([z])
 
 
-def min_cant(R, v_ms):
+def min_cant(R: float, v_ms: float) -> float:
     """Least applied cant that keeps deficiency within ED at speed v on radius R."""
     if R >= 4000:
         return 0.0
@@ -727,7 +758,7 @@ def min_cant(R, v_ms):
     return min(max(need, 0.0), CANT)
 
 
-rev_info = []
+rev_info: list[dict[str, Any]] = []
 for zone in clustered:
     i_rev = int(np.mean(zone))
     i_rev = max(1, min(i_rev, N - 2))
@@ -745,7 +776,7 @@ for zone in clustered:
     R_l = float(radii[max(0, lo - 1)])
     R_r = float(radii[min(N - 1, hi + 1)])
 
-    def transition_ok(v):
+    def transition_ok(v: float) -> tuple[bool, str]:
         d_l = min_cant(R_l, v)
         d_r = min_cant(R_r, v)
         dE = d_l + d_r
@@ -795,11 +826,11 @@ for info in rev_info:
     vp[a:b + 1] = np.minimum(vp[a:b + 1], v_lim)
     n_capped += int(np.sum(vp[a:b + 1] < before))
 
-binding = [r for r in rev_info if r["v_lim_kmh"] < CONFIG["v_max_kmh"] - 0.1]
-print(f"  Reverse-curve zones: {len(rev_info)}, speed-constraining: {len(binding)}")
-if binding:
+binding_zones = [r for r in rev_info if r["v_lim_kmh"] < CONFIG["v_max_kmh"] - 0.1]
+print(f"  Reverse-curve zones: {len(rev_info)}, speed-constraining: {len(binding_zones)}")
+if binding_zones:
     print(f"  {'km':>8} {'L_avail':>9} {'V_lim':>8} {'bind':>7} {'R_bef':>7} {'R_aft':>7}")
-    for r in binding[:25]:
+    for r in binding_zones[:25]:
         print(f"  {r['km']:>8.2f} {r['L_avail_m']:>8} m {r['v_lim_kmh']:>7.1f} "
               f"{r['binding']:>7} {r['r_bef']:>6} m {r['r_aft']:>6} m")
 print(f"  {n_capped} points capped by transition limits")
@@ -810,7 +841,7 @@ print(f"  {n_capped} points capped by transition limits")
 # ------------------------------------------------------------
 THRESH = CONFIG["curve_thresh_m"]
 MINL = CONFIG["curve_min_len_m"]
-curves = []
+curves: list[Curve] = []
 in_curve = radii < THRESH
 i = 0
 while i < N:
@@ -822,15 +853,16 @@ while i < N:
         if arc >= MINL:
             mi = i + int(np.argmin(radii[i:j]))
             tlon, tlat = to_lonlat(xs_r[mi], ys_r[mi])
-            curves.append({
-                "i0": i, "i1": j - 1, "imin": mi,
-                "track_lon": tlon, "track_lat": tlat,
-                "start_km": round(chain_m[i] / 1000.0, 3),
-                "end_km": round(chain_m[j - 1] / 1000.0, 3),
-                "length_m": round(arc),
-                "min_r": round(float(radii[i:j].min())),
-                "perm_kmh": round(v_from_radius(float(radii[i:j].min())) * 3.6, 1),
-            })
+            curves.append(Curve(
+                i0=i, i1=j - 1, imin=mi,
+                track_lon=tlon, track_lat=tlat,
+                start_km=round(chain_m[i] / 1000.0, 3),
+                end_km=round(chain_m[j - 1] / 1000.0, 3),
+                length_m=round(arc),
+                min_r=round(float(radii[i:j].min())),
+                perm_kmh=round(v_from_radius(float(radii[i:j].min())) * 3.6, 1),
+                loss_s=0.0,
+            ))
         i = j
     else:
         i += 1
@@ -862,7 +894,7 @@ V_TRANS = POWER / TE_MAX
 CURVE_RES_K = 700.0
 
 
-def resistance_n(v_ms, grade_frac=0.0, radius_m=R_CAP):
+def resistance_n(v_ms: float, grade_frac: float = 0.0, radius_m: float = R_CAP) -> float:
     v_kmh = v_ms * 3.6
     r_roll = (MASS / 1000.0) * (DA + DB * v_kmh)
     r_aero = DC * (v_kmh / 100.0) ** 2 * 1000.0
@@ -870,13 +902,13 @@ def resistance_n(v_ms, grade_frac=0.0, radius_m=R_CAP):
     return r_roll + r_aero + r_curve + MASS * G * grade_frac
 
 
-def net_accel(v_ms, grade_frac=0.0, radius_m=R_CAP):
+def net_accel(v_ms: float, grade_frac: float = 0.0, radius_m: float = R_CAP) -> float:
     te = TE_MAX if v_ms <= V_TRANS else POWER / max(v_ms, 0.1)
     a = (te - resistance_n(v_ms, grade_frac, radius_m)) / EFF_MASS
     return min(a, A_CAP)
 
 
-def max_decel(v_ms, grade_frac=0.0, radius_m=R_CAP):
+def max_decel(v_ms: float, grade_frac: float = 0.0, radius_m: float = R_CAP) -> float:
     b = (BRK_MAX + resistance_n(v_ms, grade_frac, radius_m)) / EFF_MASS
     return max(min(b, B_CAP), 0.01)
 
@@ -897,7 +929,9 @@ else:
     print("  Point-mass train")
 
 
-def build_envelope(vperm, slen, stops, grd, rad):
+def build_envelope(
+    vperm: np.ndarray, slen: np.ndarray, stops: list[int], grd: np.ndarray, rad: np.ndarray,
+) -> np.ndarray:
     pts = sorted(set(stops))
     env = np.zeros(len(vperm))
     for k in range(len(pts) - 1):
@@ -920,7 +954,7 @@ def build_envelope(vperm, slen, stops, grd, rad):
     return env
 
 
-def cumulative_time(env, slen):
+def cumulative_time(env: np.ndarray, slen: np.ndarray) -> np.ndarray:
     t = np.zeros(len(env))
     for i in range(1, len(env)):
         t[i] = t[i - 1] + slen[i - 1] / max((env[i - 1] + env[i]) / 2.0, 0.1)
@@ -944,8 +978,10 @@ env2 = build_envelope(vp_r_eff, slen_r, stops_r, grade_r, radii_r)
 traw2 = cumulative_time(env2, slen_r)
 
 
-def schedule(traw, stn_idx_seq, stop_flags):
-    out = []
+def schedule(
+    traw: np.ndarray, stn_idx_seq: list[int], stop_flags: list[bool],
+) -> tuple[list[float], float]:
+    out: list[float] = []
     prev_t = float(traw[stn_idx_seq[0]])
     acc = 0.0
     for k, (idx, is_stop) in enumerate(zip(stn_idx_seq, stop_flags)):
@@ -967,7 +1003,7 @@ flag2 = [s["stop"] for s in reversed(stations)]
 arr2, tot2 = schedule(traw2, seq2, flag2)
 
 
-def fmt(sec):
+def fmt(sec: float) -> str:
     m = int(round(sec / 60))
     return f"{m//60}h{m%60:02d}m" if m >= 60 else f"{m}m"
 
@@ -978,7 +1014,7 @@ t2h, t2m = map(int, CONFIG["dep_hhmm_t2"].split(":"))
 BASE2 = t2h * 3600 + t2m * 60
 
 
-def clock(base, off):
+def clock(base: int, off: float) -> str:
     t = base + off
     return f"{int(t//3600)%24:02d}:{int((t%3600)//60):02d}"
 
@@ -1029,7 +1065,7 @@ TAKT = CONFIG["takt_min"] * 60.0
 TURN = CONFIG["turnaround_min"] * 60.0
 
 
-def physical_time_profile(traw, stops, forward):
+def physical_time_profile(traw: np.ndarray, stops: list[int], forward: bool) -> np.ndarray:
     stop_set = sorted(set(stops))
     dwell_before = np.zeros(N)
     run = 0.0
@@ -1054,9 +1090,9 @@ g_fun = t1_phys - t2_phys
 offset0 = BASE2 - BASE1
 
 
-def meets_for_offset(offset):
+def meets_for_offset(offset: float) -> list[dict]:
     lo, hi = float(g_fun[0]), float(g_fun[-1])
-    out = []
+    out: list[dict] = []
     jmin = int(math.floor((lo - offset) / TAKT)) - 1
     jmax = int(math.ceil((hi - offset) / TAKT)) + 1
     for j in range(jmin, jmax + 1):
@@ -1070,7 +1106,7 @@ def meets_for_offset(offset):
                     "grade_pct": float(grade[i]) * 100.0,
                     "speed_kmh": float(min(env1[i], env2[N - 1 - i])) * 3.6})
     out.sort(key=lambda m: m["km"])
-    clus = []
+    clus: list[dict] = []
     for m in out:
         if clus and m["km"] - clus[-1]["km"] < CONFIG["loop_cluster_km"]:
             continue
@@ -1078,7 +1114,7 @@ def meets_for_offset(offset):
     return clus
 
 
-def site_score(meets):
+def site_score(meets: list[dict]) -> float:
     s = 0.0
     for m in meets:
         if m["radius_m"] < 600:
@@ -1135,28 +1171,28 @@ if to_drop:
 # ------------------------------------------------------------
 # 12. Per-curve time loss
 # ------------------------------------------------------------
-ranked = []
+ranked: list[Curve] = []
 if CONFIG["rank_curve_time_loss"] and curves:
     print("\n[11/11] Curve time-loss ranking")
     stops_sorted = sorted(set(stop_indices))
 
-    def leg_time(vperm, i0, i1):
+    def leg_time(vperm: np.ndarray, i0: int, i1: int) -> float:
         env = build_envelope(vperm[i0:i1 + 1], seg_len[i0:i1],
                              [0, i1 - i0], grade[i0:i1 + 1], radii[i0:i1 + 1])
         return float(cumulative_time(env, seg_len[i0:i1])[-1])
 
     for c in curves:
-        a = max([s for s in stops_sorted if s <= c["i0"]], default=stops_sorted[0])
-        b = min([s for s in stops_sorted if s >= c["i1"]], default=stops_sorted[-1])
-        if b <= a:
+        leg_i0 = max([s for s in stops_sorted if s <= c["i0"]], default=stops_sorted[0])
+        leg_i1 = min([s for s in stops_sorted if s >= c["i1"]], default=stops_sorted[-1])
+        if leg_i1 <= leg_i0:
             continue
-        base_t = leg_time(vp_eff, a, b)
+        base_t = leg_time(vp_eff, leg_i0, leg_i1)
         relaxed = vp.copy()
         relaxed[c["i0"]:c["i1"] + 1] = VMAX
         if Lp > 0:
             relaxed = minimum_filter1d(relaxed, size=Lp + 1,
                                        origin=(Lp // 2), mode="nearest")
-        new_t = leg_time(relaxed, a, b)
+        new_t = leg_time(relaxed, leg_i0, leg_i1)
         c["loss_s"] = round(base_t - new_t, 1)
         ranked.append(c)
 
@@ -1181,7 +1217,7 @@ label = CONFIG["run_label"]
 outdir = _outdir_str
 
 
-def write_csv_outputs():
+def write_csv_outputs() -> None:
     tt_path = os.path.join(outdir, f"{label}_timetable.csv")
     with open(tt_path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
