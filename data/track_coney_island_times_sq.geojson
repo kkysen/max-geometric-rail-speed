@@ -4,9 +4,8 @@
     {
       "type": "Feature",
       "properties": {
-        "source": "MTA DOS Track Linear Referencing System (LRS), data.ny.gov dyuj-5if7, RouteId BMT-A-3",
-        "route": "Coney Island-Stillwell Av to Times Sq-42 St via Brighton Line, Manhattan Bridge, Broadway Express",
-        "note": "~1684 m straight-line bridge across the DeKalb Ave interlocking / Manhattan Bridge crossing -- see README"
+        "source": "MTA DOS Track Linear Referencing System (LRS), data.ny.gov dyuj-5if7, RouteId BMT-A-3; 1684 m straight-line bridge across the DeKalb Ave interlocking / Manhattan Bridge crossing -- see README",
+        "route": "Coney Island-Stillwell Av to Times Sq-42 St via Brighton Express, Manhattan Bridge, Broadway Express"
       },
       "geometry": {
         "type": "LineString",

@@ -1,0 +1,16 @@
+# Grade breakpoints for the DeKalb Av -> 42 St-Bryant Pk route.
+# chainage_km,grade_pct: grade holds constant from this chainage until the next row.
+#
+# Source: subs.nyc ("SUBWAYS_IO", by Calcagno Maps / NYRTIG), https://map.subs.nyc/data.js,
+# const GRADES, division B2, chain B, route "Route 112" ("IND Manhattan Bridge
+# Connection" / "Track B3/B4 IND Manhattan Bridge Connection"): grade 3.5-5.1 at
+# markers 878+77/881+70/886+00/907+90. Simplified to a single representative +-5.1%
+# "hump" over the DeKalb Ave interlocking / Chrystie St Connection / Manhattan Bridge
+# (north tracks) span -- real curvature is available there (unlike the Broadway route's
+# bridge), but not elevation. Sign (climb then descend) inferred from the physical
+# profile, not encoded in the source. Everywhere else defaults to flat.
+chainage_km,grade_pct
+0.000,0.0
+1.994,5.1
+2.518,-5.1
+2.780,0.0
