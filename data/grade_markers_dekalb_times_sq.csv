@@ -13,6 +13,6 @@
 # the source, which gives magnitude only. Everywhere else on the route defaults to flat.
 chainage_km,grade_pct
 0.000,0.0
-17.087,5.1
-17.929,-5.1
-18.771,0.0
+1.994,5.1
+2.836,-5.1
+3.679,0.0
