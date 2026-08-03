@@ -110,7 +110,7 @@ def stations_gdf(stations: list[dict]) -> gpd.GeoDataFrame:
     ).to_crs(2263)
 
 
-def clip_dir(line, chain_a: float, chain_b: float) -> list[tuple[float, float]]:
+def clip_dir(line: LineString, chain_a: float, chain_b: float) -> list[tuple[float, float]]:
     """Coords of `line` between the two chainages, ordered chain_a -> chain_b."""
     lo, hi = sorted((chain_a, chain_b))
     piece = substring(line, lo, hi)
