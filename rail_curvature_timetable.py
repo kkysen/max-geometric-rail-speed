@@ -4,6 +4,7 @@
 # dependencies = [
 #     "numpy",
 #     "scipy",
+#     "typer",
 # ]
 # ///
 """
@@ -189,13 +190,63 @@ CONFIG = {
 # SCRIPT
 # ============================================================
 
+import csv
 import json
 import math
 import os
-import csv
+from enum import Enum
+
 import numpy as np
-from scipy.interpolate import splprep, splev
-from scipy.ndimage import uniform_filter1d, minimum_filter1d
+import typer
+from scipy.interpolate import splev, splprep
+from scipy.ndimage import minimum_filter1d, uniform_filter1d
+
+
+class Route(str, Enum):
+    """One of scripts/prepare_route.py's prepared routes."""
+
+    coney_island_times_sq = "coney_island_times_sq"
+    dekalb_times_sq = "dekalb_times_sq"
+    dekalb_bryant_park = "dekalb_bryant_park"
+
+
+# route -> (human-readable title, run_label)
+ROUTE_META = {
+    Route.coney_island_times_sq: ("Coney Island-Stillwell Av to Times Sq-42 St", "ConeyIsland_TimesSq"),
+    Route.dekalb_times_sq: ("DeKalb Av to Times Sq-42 St", "DeKalb_TimesSq"),
+    Route.dekalb_bryant_park: ("DeKalb Av to 42 St-Bryant Pk", "DeKalb_BryantPark"),
+}
+
+
+def _select_route(
+    route: Route = typer.Argument(
+        Route.coney_island_times_sq,
+        help="Which of scripts/prepare_route.py's prepared routes to run.",
+    ),
+):
+    """Run the geometric-potential timetable model for one route."""
+    # Just points CONFIG's input/output paths at the chosen route; the rest
+    # of this module runs top to bottom afterward, like the original QGIS
+    # console script did -- there's no function to return into.
+    title, label = ROUTE_META[route]
+    CONFIG["track_geojson"] = f"data/track_{route.value}.geojson"
+    CONFIG["stations_csv"] = f"data/stations_{route.value}.csv"
+    CONFIG["grade_csv"] = f"data/grade_markers_{route.value}.csv"
+    CONFIG["run_label"] = label
+    print(f"Route: {title} ({route.value})")
+
+
+# Not typer.run(): that calls sys.exit() unconditionally once the command
+# function returns, which would end the process right here instead of
+# falling through to the rest of this module. standalone_mode=False keeps
+# Click from doing that on a normal parse -- it returns None instead -- but
+# --help still needs to stop here, which it signals by returning an int
+# rather than raising.
+_app = typer.Typer(add_completion=False)
+_app.command()(_select_route)
+_cli_result = _app(standalone_mode=False)
+if isinstance(_cli_result, int):
+    raise SystemExit(_cli_result)
 
 print("=" * 64)
 print("Railway Timetable Generator -- standalone adaptation")
