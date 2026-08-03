@@ -1,25 +1,39 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "numpy",
+#     "scipy",
+# ]
+# ///
 """
-Brendan Dawe's Railway Curvature & Timetable Generator  v5
-===========================================
-QGIS 3.28+ Python Console script.
+Railway Curvature & Timetable Generator -- standalone adaptation
+==================================================================
+Adapted from Brendan Dawe's QGIS 3.28+ Python Console script (v5), CC BY-NC 4.0:
+https://gist.github.com/BSDawe/52c5fd15202fee9912c7391dbf8352cd
+The original, unmodified script is preserved in this repo's first git commit --
+`git show 537968c:rail_curvature_timetable.py`.
 
-(c) Brendan Dawe. Licensed CC BY-NC 4.0 (Attribution-NonCommercial):
-free to use, share, and modify for personal, educational, or research
-purposes with attribution. Full text:
-https://creativecommons.org/licenses/by-nc/4.0/
+This version runs as a plain `uv run rail_curvature_timetable.py` script, outside QGIS:
 
-If you'd like to use this as part of paid consulting, a commissioned
-report, or your work at a transit agency, engineering firm, or similar
-organization, please get in touch first -- I'm generally happy to say
-yes, I just want to know it's happening. Hobbyists, students, and
-enthusiasts: use it freely, no need to ask.
+  * Track input is a GeoJSON LineString/MultiLineString FeatureCollection
+    instead of a QGIS vector layer.
+  * Grade is read from an optional CSV of chainage/percent-grade breakpoints
+    (piecewise-constant) instead of a QGIS DEM raster layer -- appropriate for
+    a mostly-underground route where no surface DEM would be meaningful anyway.
+  * Output is CSV only; the original's QGIS memory-layer output section is
+    removed (nothing to add a layer to outside QGIS).
+
+The curvature/speed/kinematics/meet-loop/curve-ranking algorithm itself is
+unchanged from the original. See the original script's docstring (copied
+below where still accurate) for what this does and does not model.
 
 
 WHAT THIS DOES
 --------------
-You give it a railway centreline (any line layer in your QGIS project) and a
-CSV of station locations. It works out how fast a train could physically run
-over that alignment, and turns that into a timetable.
+You give it a railway centreline (GeoJSON) and a CSV of station locations. It
+works out how fast a train could physically run over that alignment, and
+turns that into a timetable.
 
 Concretely, it:
 
@@ -55,122 +69,8 @@ Treat the output as an upper bound, and as a way of comparing scenarios
 against each other rather than as a schedule you could publish.
 
 
-QUICK START
------------
-  1. Load your track centreline as a line layer in QGIS. Note its layer name.
-  2. Make a stations CSV with columns: name, lat, lon
-     Optionally add a "stop" column (1 = call, 0 = pass through).
-     List the stations in route order.
-  3. In the CONFIG block below, set at minimum:
-        track_layer_name   your layer's name
-        stations_csv       full path to the CSV
-        chain_start        which end of the route to measure from
-  4. Paste the whole script into the QGIS Python Console and run.
-
-Nothing is written to disk unless you set output_dir. By default the script
-runs in scratch mode: it adds three memory layers to your project and prints
-everything to the console. Set output_dir to a real folder to also get CSVs.
-
-The script validates your CONFIG before doing any work, so mistakes surface
-in about a second rather than after a full run.
-
-
-THE OUTPUT LAYERS
------------------
-  <label>_speed    the route, split into short segments, carrying permissible
-                   speed, envelope speed in each direction, radius and grade.
-                   Style this graduated on env_t1_kmh to see where the train
-                   is actually slow.
-  <label>_curves   one point per curve, carrying radius, permissible speed and
-                   time_loss_s. Style graduated on loss_s: the big dots are
-                   the curves worth spending money on.
-  <label>_loops    where opposing trains meet, and therefore where passing
-                   loops are needed. Includes a minimum usable loop length.
-
-
-READING THE CONSOLE OUTPUT
---------------------------
-Most of it is self-explanatory. Three things repay attention:
-
-  Reverse-curve table. Where two curves bend opposite ways with a short
-  straight between them, cant has to be ramped from one side to the other,
-  and that takes distance. The "bind" column tells you which limit is doing
-  the damage:
-      dD/dt  rate of change of applied cant
-      dI/dt  rate of change of cant deficiency
-      dD/ds  cant gradient - not enough length to build the cant at all
-  If dI/dt dominates, your alignment cannot usefully take cant and speed
-  depends almost entirely on how much deficiency the stock will tolerate.
-  Raising ed_mm will then do more for you than easing radii will.
-
-  Curve time-loss ranking. Each curve is relaxed to line speed in turn and
-  the leg is re-run, so loss_s is the time that curve actually costs, not a
-  proxy. A long tail of 10-30 second curves means there is no single
-  realignment worth doing; a short head of large values means there is.
-
-  Loop table and fleet count. Loop count and fleet size are step functions of
-  run time, so the script reports how many seconds you would need to save to
-  drop to the next step down. That is usually the number that decides whether
-  a given investment is worth anything.
-
-
-KEY SETTINGS, AND THE ONES PEOPLE GET WRONG
--------------------------------------------
-  cant_mm / ed_mm
-      Applied cant and cant deficiency, in millimetres. Their sum sets
-      permissible speed: R = 11.8 * V^2 / (cant + deficiency). Typical
-      conventional practice is 150-180 cant and 100-150 deficiency. Tilting
-      stock runs 250-300 deficiency.
-
-  cant_base_m  --  LEAVE THIS AT 1.500
-      This is EN 13803's 'e', the spacing between the two wheel-rail contact
-      patches. It is NOT the track gauge, even though 1435 mm is sitting right
-      there looking like the obvious value. Cant is an angle expressed against
-      a 1500 mm reference base, so the cant figure you enter above is already
-      defined on that base. Setting this to 1.435 mixes two reference bases in
-      one equation and overstates every speed by 2.2%. The script refuses to
-      run if you change it.
-
-  xy_noise_m
-      How much positional error you expect in your centreline, in metres. This
-      drives the smoothing spline. Too low and the script differentiates your
-      digitising wobble into imaginary sharp curves; too high and it smooths
-      away real ones. If the console warns that smoothed minimum radius is far
-      above raw minimum radius, raise this rather than touching curv_smooth_m.
-
-  chain_start
-      Which end of the route to start measuring from. Use "south" or "north"
-      for north-south corridors and "west" or "east" for east-west ones.
-      Getting it wrong is harmless - the script detects it from the station
-      order and reverses - but setting it correctly avoids the extra pass.
-
-  train_length_m
-      A speed restriction applies until the whole train has cleared it, so
-      restrictions extend one train length beyond the curve itself. Set to 0
-      for a point-mass approximation.
-
-  dem_layer_name
-      Optional. Without a DEM every gradient is zero, which on any route with
-      real topography is the largest single error in the result, and it makes
-      the two directions come out artificially identical. Surface DEMs read
-      hillsides rather than formation in cuttings and tunnels, so grades are
-      clipped at dem_max_grade_pct and flagged.
-
-  takt_min
-      The service interval you want to run. This drives the whole meet and
-      fleet analysis. On a symmetric clockface timetable, opposing trains
-      cross at fixed points spaced half a takt apart in RUNNING TIME, which
-      is why loops bunch together where the line is slow.
-
-
-GRADE CONVENTION
-----------------
-  grade_pct > 0 = uphill in the Train 1 direction (increasing chainage).
-  The sign is flipped automatically for Train 2.
-
-
-CSV FORMAT
-----------
+CSV FORMAT (stations)
+----------------------
   name,lat,lon,stop
   Victoria,48.4284,-123.3656,1
   Langford,48.4500,-123.5000,1
@@ -183,80 +83,102 @@ CSV FORMAT
   chainage will be wrong enough to move loop locations.
 
 
-REQUIREMENTS
-------------
-  QGIS 3.28 or later, with numpy and scipy (both ship with QGIS).
-  GDAL is used for local DEM files if present, with a slower QGIS
-  identify-based fallback for web raster layers.
+CSV FORMAT (grade breakpoints, optional)
+------------------------------------------
+  chainage_km,grade_pct
+  0.0,0.0
+  12.4,3.2
+  13.1,0.0
+
+  Piecewise-constant: the grade holds from each row's chainage until the
+  next row. Omit (grade_csv = None) to fall back to CONFIG["grade_pct"]
+  applied uniformly, same as the original script's no-DEM fallback.
+
+
+GRADE CONVENTION
+----------------
+  grade_pct > 0 = uphill in the Train 1 direction (increasing chainage).
+  The sign is flipped automatically for Train 2.
 """
 
 # ============================================================
 # CONFIG
 # ============================================================
-
+#
+# Rolling-stock figures below are derived from the NYCT R211 Technical
+# Specification (Contract R34211, Section 2 - Design and Performance
+# Criteria), not measured/official published performance figures:
+#   - v_max_kmh:      55 mph (tractive effort removed at 55 mph) = 88.5 km/h
+#   - max_accel_ms2:  2.50 mi/h/s = 1.117 m/s^2, full power, up to AW2
+#   - max_decel_ms2:  3.0 mi/h/s = 1.34 m/s^2, full service brake, up to AW3
+#   - mass_tonnes:    82,000 lb (37,195 kg) average AW0 car weight x 8 cars
+#                     for a representative Broadway-line consist
+#   - max_te_kn / power_kw: back-calculated from mass x max_accel (starting
+#     tractive effort) and an assumed ~30 km/h base speed, since the spec
+#     text extracted here didn't include an explicit total HP/kN figure --
+#     order-of-magnitude only, not read directly off the document
+#   - Third rail is 600 VDC nominal per the R211 spec (sometimes cited
+#     elsewhere as 625V); not used by this model, noted for context only
+# Cant/deficiency: NYCT trackage generally uses little to no superelevation;
+# 75 mm / 75 mm (~3 in / 3 in) is a rough approximation, not a cited standard.
 CONFIG = {
     # --- Input ---
-    "track_layer_name": "MyTrack", #This is just the name in your layer list
-    "stations_csv":     r"C:\path\to\stations.csv",
-    "dem_layer_name":   None,
+    "track_geojson":    "data/track_coney_island_times_sq.geojson",
+    "stations_csv":     "data/stations_coney_island_times_sq.csv",
+    "grade_csv":        "data/grade_markers_coney_island_times_sq.csv",
 
     # --- Output ---
-    "output_dir":       None,   # None = scratch layers only, no files
-    "run_label":        "MyRoute",
+    "output_dir":       "output",
+    "run_label":        "ConeyIsland_TimesSq",
 
     # --- Track geometry ---
-    "cant_mm":       180,
-    "ed_mm":         120,             # Cant Deficiency 
+    "cant_mm":       75,
+    "ed_mm":         75,               # Cant Deficiency
     # EN 13803 'e': contact patch spacing, NOT track gauge. Do not set 1.435.
     "cant_base_m":   1.500,
 
-    # --- Rolling stock ---
-    "v_max_kmh":      160.0,
-    "power_kw":      5200.0,
-    "mass_tonnes":    200.0,
-    "max_te_kn":      360.0,          # Maximum Tractive Effort (kN)
-    "max_brake_kn":   280.0,
-    "traction_type":  "emu",          # emu / dmu / loco
-    "train_length_m": 200.0,
+    # --- Rolling stock (NYCT R211-derived, see note above) ---
+    "v_max_kmh":      88.5,
+    "power_kw":      2800.0,
+    "mass_tonnes":    297.6,
+    "max_te_kn":      332.0,           # Maximum Tractive Effort (kN)
+    "max_brake_kn":   399.0,
+    "traction_type":  "emu",           # emu / dmu / loco
+    "train_length_m": 146.3,           # 8 x 60 ft (18.29 m) cars
 
     # --- Comfort caps (passenger) ---
-    "max_accel_ms2":  1.10,
-    "max_decel_ms2":  1.10,
+    "max_accel_ms2":  1.117,
+    "max_decel_ms2":  1.34,
 
     # --- Grade ---
-    "grade_pct":         0.0,
-    "dem_smooth_m":    400.0,
-    "dem_max_grade_pct": 3.0,
+    "grade_pct":         0.0,          # fallback if grade_csv is None
 
     # --- Schedule ---
-    "dwell_s":       60.0,
+    "dwell_s":       30.0,
     "recovery":      0.07,
     "dep_hhmm_t1":  "07:00",
     "dep_hhmm_t2":  "07:00",
 
     # --- Service pattern (for meets / fleet) ---
-    "takt_min":         60,
-    "turnaround_min":   15,
+    "takt_min":         10,
+    "turnaround_min":   10,
     "meet_phase_sweep": True,
     "loop_cluster_km":  1.5,
     "punctuality_s":    60.0,
 
-    # --- Chain start ---
-    "chain_start": "south",           # south / north / east / west
-
     # --- Geometry processing ---
     "resample_m":       20.0,
-    "xy_noise_m":        3.0,         # expected digitising error -> spline s
-    "curv_smooth_m":   100.0,         # curvature-space smoothing window
+    "xy_noise_m":        5.0,          # LRS panel data is coarser than a digitized line
+    "curv_smooth_m":   100.0,          # curvature-space smoothing window
     "curve_thresh_m":  2000,
     "curve_min_len_m":  100,
     "spur_max_len_m": 2000.0,
 
     # --- Reverse curve / EN 13803 ---
     "rev_curve_qualify_r":  1000,
-    "cant_rate_mms":        35.0,     # dD/dt
-    "cant_def_rate_mms":    55.0,     # dI/dt
-    "cant_gradient_mm_m":    2.5,     # dD/ds, 2.5 mm/m = 1:400
+    "cant_rate_mms":        35.0,      # dD/dt
+    "cant_def_rate_mms":    55.0,      # dI/dt
+    "cant_gradient_mm_m":    2.5,      # dD/ds, 2.5 mm/m = 1:400
 
     # --- Analysis toggles ---
     "rank_curve_time_loss": True,
@@ -267,23 +189,19 @@ CONFIG = {
 # SCRIPT
 # ============================================================
 
-import math, os, csv
+import json
+import math
+import os
+import csv
 import numpy as np
 from scipy.interpolate import splprep, splev
 from scipy.ndimage import uniform_filter1d, minimum_filter1d
-from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsFeature, QgsGeometry,
-    QgsPointXY, QgsField, QgsFields, QgsWkbTypes,
-    QgsCoordinateReferenceSystem, QgsCoordinateTransform,
-    QgsCoordinateTransformContext, QgsRasterLayer,
-)
-from PyQt5.QtCore import QVariant
 
 print("=" * 64)
-print("Railway Timetable Generator  v5")
-print("Written by Brendan Dawe -- CC BY-NC 4.0 (Attribution-NonCommercial)")
+print("Railway Timetable Generator -- standalone adaptation")
+print("Original by Brendan Dawe -- CC BY-NC 4.0 (Attribution-NonCommercial)")
 print("Free for personal, educational and research use. Professional or")
-print("organizational use: please contact me first. See header for details.")
+print("organizational use: please contact the original author first.")
 print("=" * 64)
 
 G = 9.81
@@ -293,26 +211,11 @@ WARNINGS = []
 # ------------------------------------------------------------
 # 0. Config validation - fail fast, before any computation
 # ------------------------------------------------------------
-# Everything here used to be checked late: stations_csv at step 5, output_dir
-# not until step 13. A typo cost the whole run, and makedirs(exist_ok=True)
-# silently created placeholder trees like C:\path\to\output instead of
-# complaining. Validate up front and refuse to start.
-
-_PLACEHOLDERS = {
-    "track_layer_name": {"MyTrack"},
-    "stations_csv": {r"C:\path\to\stations.csv", "/path/to/stations.csv"},
-    "output_dir": {r"C:\path\to\output", "/path/to/output"},
-    "run_label": {"MyRoute"},
-}
-
 _errors = []
 
-# Only inputs are fatal when left as placeholders. output_dir and run_label
-# are handled below: an unset output_dir means scratch layers, not an error.
-for _key in ("track_layer_name", "stations_csv"):
-    if str(CONFIG.get(_key, "")).strip() in _PLACEHOLDERS[_key]:
-        _errors.append(f"CONFIG['{_key}'] is still the placeholder "
-                       f"{CONFIG[_key]!r} - set it to a real value")
+_geojson = CONFIG["track_geojson"]
+if not os.path.isfile(_geojson):
+    _errors.append(f"track_geojson not found: {_geojson}")
 
 _csv = CONFIG["stations_csv"]
 if not os.path.isfile(_csv):
@@ -328,32 +231,26 @@ else:
     except Exception as _exc:
         _errors.append(f"stations_csv unreadable: {_exc}")
 
+_grade_csv = CONFIG.get("grade_csv")
+if _grade_csv and not os.path.isfile(_grade_csv):
+    _errors.append(f"grade_csv not found: {_grade_csv} (set to None for flat grade)")
+
 _outdir = CONFIG.get("output_dir")
 _outdir_str = str(_outdir).strip() if _outdir is not None else ""
 WRITE_FILES = True
 
-if (_outdir is None or _outdir_str == ""
-        or _outdir_str in _PLACEHOLDERS["output_dir"]):
-    # Scratch mode: memory layers only, nothing written to disk.
+if _outdir is None or _outdir_str == "":
     WRITE_FILES = False
 elif os.path.isdir(_outdir_str):
     if not os.access(_outdir_str, os.W_OK):
         _errors.append(f"output_dir is not writable: {_outdir_str}")
 else:
-    # A path was given but doesn't exist. Create one level only, and only if
-    # the parent is real - a missing parent means the path is wrong, not that
-    # a tree needs building.
-    _parent = os.path.dirname(os.path.normpath(_outdir_str))
-    if _parent and not os.path.isdir(_parent):
-        _errors.append(f"output_dir parent does not exist: {_parent}\n"
-                       f"      (refusing to create the full tree - check the path.\n"
-                       f"       Set output_dir to None for scratch layers only.)")
+    _parent = os.path.dirname(os.path.normpath(_outdir_str)) or "."
+    if not os.path.isdir(_parent):
+        _errors.append(f"output_dir parent does not exist: {_parent}")
     else:
-        try:
-            os.makedirs(_outdir_str)
-            print(f"  Created output directory: {_outdir_str}")
-        except Exception as _exc:
-            _errors.append(f"could not create output_dir {_outdir_str}: {_exc}")
+        os.makedirs(_outdir_str)
+        print(f"  Created output directory: {_outdir_str}")
 
 if not str(CONFIG.get("run_label", "")).strip():
     CONFIG["run_label"] = "Route"
@@ -361,16 +258,6 @@ _bad_chars = set('\\/:*?"<>|')
 if _bad_chars & set(str(CONFIG["run_label"])):
     _errors.append(f"run_label contains illegal filename characters: "
                    f"{CONFIG['run_label']!r}")
-
-if not QgsProject.instance().mapLayersByName(CONFIG["track_layer_name"]):
-    _names = [l.name() for l in QgsProject.instance().mapLayers().values()]
-    _errors.append(f"track layer '{CONFIG['track_layer_name']}' not in project.\n"
-                   f"      Loaded layers: {', '.join(_names) if _names else '(none)'}")
-
-if CONFIG.get("dem_layer_name"):
-    if not QgsProject.instance().mapLayersByName(CONFIG["dem_layer_name"]):
-        _errors.append(f"dem_layer_name '{CONFIG['dem_layer_name']}' not in project "
-                       f"(set to None for a flat model)")
 
 if abs(CONFIG["cant_base_m"] - 1.5) > 0.05:
     _errors.append(f"cant_base_m is {CONFIG['cant_base_m']} - expected ~1.500. "
@@ -382,26 +269,17 @@ for _k in ("v_max_kmh", "power_kw", "mass_tonnes", "max_te_kn",
     if CONFIG.get(_k, 0) <= 0:
         _errors.append(f"CONFIG['{_k}'] must be positive")
 
-class ConfigError(Exception):
-    """Raised for invalid CONFIG. Deliberately NOT SystemExit: QGIS embeds
-    Python in the application process, so a propagating SystemExit is read as
-    a request to shut the interpreter down and takes QGIS with it."""
-
-
 if _errors:
     _msg = ["", "CONFIGURATION ERRORS - nothing was run:", ""]
     for _e in _errors:
         _msg.append(f"  * {_e}")
     _msg += ["", "Fix the CONFIG block above and re-run.", ""]
-    _text = "\n".join(_msg)
-    print(_text)
-    raise ConfigError(_text)
+    raise SystemExit("\n".join(_msg))
 
 if WRITE_FILES:
     print(f"  Config OK -> {os.path.join(_outdir_str, CONFIG['run_label'])}_*.csv")
 else:
-    print("  Config OK -> SCRATCH MODE: memory layers only, no files written")
-    print("               (set output_dir to a real folder to save CSVs)")
+    print("  Config OK -> no output_dir set, nothing will be written")
 
 
 def warn(kind, msg):
@@ -419,24 +297,23 @@ def hav(p1, p2):
 
 
 # ------------------------------------------------------------
-# 1. Load track
+# 1. Load track (GeoJSON instead of a QGIS vector layer)
 # ------------------------------------------------------------
-print(f"\n[1/11] Loading track layer: {CONFIG['track_layer_name']}")
-_layers = QgsProject.instance().mapLayersByName(CONFIG["track_layer_name"])
-if not _layers:
-    raise ValueError(f"Layer '{CONFIG['track_layer_name']}' not found.")
-layer = _layers[0]
+print(f"\n[1/11] Loading track: {CONFIG['track_geojson']}")
+with open(CONFIG["track_geojson"]) as _fh:
+    _gj = json.load(_fh)
 
 segments = []
-for feat in layer.getFeatures():
-    geom = feat.geometry()
-    if geom is None:
+for feat in _gj["features"]:
+    geom = feat["geometry"]
+    if geom["type"] == "LineString":
+        parts = [geom["coordinates"]]
+    elif geom["type"] == "MultiLineString":
+        parts = geom["coordinates"]
+    else:
         continue
-    parts = (geom.asMultiPolyline()
-             if QgsWkbTypes.isMultiType(geom.wkbType())
-             else [geom.asPolyline()])
     for part in parts:
-        pts = [(p.x(), p.y()) for p in part if p.x() != 0 or p.y() != 0]
+        pts = [(p[0], p[1]) for p in part if p[0] != 0 or p[1] != 0]
         if len(pts) >= 2:
             L = sum(hav(pts[j], pts[j + 1]) for j in range(len(pts) - 1))
             segments.append({"points": pts, "len_m": L,
@@ -472,7 +349,6 @@ if spurs:
     for sp in spurs:
         lon, lat = sp["free_end"]
         print(f"    seg {sp['idx']:>4}  {sp['len_m']:>6} m  {lat:.5f}, {lon:.5f}")
-    print("  -> filter in QGIS if they disturb chaining")
 else:
     print("  No spurs detected.")
 
@@ -480,16 +356,10 @@ else:
 # ------------------------------------------------------------
 # 3. Chain
 # ------------------------------------------------------------
-print(f"\n[3/11] Chaining (chain_start='{CONFIG['chain_start']}')")
-_cs = CONFIG.get("chain_start", "south").lower()
-if _cs == "south":
-    _key = lambda f, r: (f["start"][1] if r == "start" else f["end"][1]); _rev = False
-elif _cs == "north":
-    _key = lambda f, r: (f["start"][1] if r == "start" else f["end"][1]); _rev = True
-elif _cs == "east":
-    _key = lambda f, r: (f["start"][0] if r == "start" else f["end"][0]); _rev = True
-else:
-    _key = lambda f, r: (f["start"][0] if r == "start" else f["end"][0]); _rev = False
+print(f"\n[3/11] Chaining ({len(segments)} segment(s))")
+_cs = "south"
+_key = lambda f, r: (f["start"][1] if r == "start" else f["end"][1])
+_rev = False
 
 endpoints = ([(_key(f, "start"), i, "start") for i, f in enumerate(segments)] +
              [(_key(f, "end"), i, "end") for i, f in enumerate(segments)])
@@ -520,9 +390,6 @@ while len(used) < len(segments):
     if best_d > 200:
         gaps.append((best_d, best_i))
     if best_d > 5000:
-        # Record the gap and stop consuming here, but keep the route built so
-        # far rather than discarding it. A gap this large usually means a
-        # disconnected branch or an unrelated line in the same layer.
         warn("LARGE_GAP", f"nearest unused segment is {best_d:.0f} m away; "
                           f"{len(segments) - len(used)} segment(s) left unchained")
         break
@@ -587,14 +454,12 @@ def to_lonlat(x, y):
 xs0 = np.array([to_xy(c[0], c[1])[0] for c in coords])
 ys0 = np.array([to_xy(c[0], c[1])[1] for c in coords])
 
-# Smoothing spline: s is the allowed sum of squared residuals.
 sigma = CONFIG["xy_noise_m"]
 s_smooth = len(xs0) * (sigma ** 2)
 u0 = np.array(cum) / polyline_m
 tck, _ = splprep([xs0, ys0], u=u0, s=s_smooth, k=3)
 print(f"  Smoothing spline: sigma {sigma:.1f} m -> s = {s_smooth:.0f}")
 
-# Dense pass to build the true arc-length table
 u_dense = np.linspace(0.0, 1.0, max(20000, 20 * int(polyline_m / CONFIG["resample_m"])))
 xd, yd = splev(u_dense, tck)
 s_dense = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(xd), np.diff(yd)))])
@@ -651,7 +516,6 @@ if n_desc > n_asc:
     print(f"  Reversing chain ({n_desc} descending vs {n_asc} ascending pairs)")
     xs_r = xs_r[::-1].copy()
     ys_r = ys_r[::-1].copy()
-    # chain_m stays 0..total ascending; geometry is now mirrored
     flipped = True
     stations = read_stations()
     kms = [s["km"] for s in stations]
@@ -691,7 +555,7 @@ ddx = np.asarray(ddx); ddy = np.asarray(ddy)
 denom = (dx * dx + dy * dy) ** 1.5
 kappa = np.where(denom > 1e-12, (dx * ddy - dy * ddx) / denom, 0.0)
 if flipped:
-    kappa = -kappa  # mirrored geometry flips handedness
+    kappa = -kappa
 
 W_CURV = max(1, int(round(CONFIG["curv_smooth_m"] / STEP)))
 kappa_s = uniform_filter1d(kappa, size=W_CURV)
@@ -717,122 +581,47 @@ if radii.min() < 50:
 
 
 # ------------------------------------------------------------
-# 7. DEM / grade
+# 7. Grade (from CSV breakpoints instead of a QGIS DEM layer)
 # ------------------------------------------------------------
-dem_name = CONFIG.get("dem_layer_name")
-use_dem = dem_name is not None
+print(f"\n[7/11] Grade")
 
 
-def sample_dem():
-    lyrs = QgsProject.instance().mapLayersByName(dem_name)
-    if not lyrs or not isinstance(lyrs[0], QgsRasterLayer):
-        warn("MODEL_LIMITATION", f"DEM '{dem_name}' unavailable - treating as flat")
+def sample_grade_csv(path):
+    breakpoints = []
+    with open(path, newline="", encoding="utf-8-sig") as fh:
+        for row in csv.reader(fh):
+            if not row or row[0].strip().startswith("#"):
+                continue
+            if row[0].strip().lower() == "chainage_km":
+                continue
+            try:
+                km = float(row[0])
+                pct = float(row[1])
+            except (ValueError, IndexError):
+                continue
+            breakpoints.append((km * 1000.0, pct / 100.0))
+    if not breakpoints:
+        warn("MODEL_LIMITATION", f"grade_csv '{path}' had no usable rows - treating as flat")
         return None
-    dem = lyrs[0]
-    src = dem.source().split("|")[0].strip()
-    is_web = any(k in src for k in ("url=", "http://", "https://", "wms", "wmts", "dpiMode"))
-    elev = None
-
-    if not is_web:
-        try:
-            from osgeo import gdal, osr
-            gdal.UseExceptions()
-            ds = gdal.Open(src)
-            if ds is not None:
-                print("  Strategy: GDAL array")
-                band = ds.GetRasterBand(1)
-                gt = ds.GetGeoTransform()
-                nodata = band.GetNoDataValue()
-                dsrs = osr.SpatialReference(); dsrs.ImportFromWkt(ds.GetProjection())
-                tsrs = osr.SpatialReference(); tsrs.ImportFromEPSG(4326)
-                tsrs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-                dsrs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
-                need = not dsrs.IsSameGeogCS(tsrs) or not dsrs.IsGeographic()
-                lons = np.array([to_lonlat(xs_r[i], ys_r[i])[0] for i in range(N)])
-                lats = np.array([to_lonlat(xs_r[i], ys_r[i])[1] for i in range(N)])
-                if need:
-                    ct = osr.CoordinateTransformation(tsrs, dsrs)
-                    cd = np.array([ct.TransformPoint(lons[i], lats[i])[:2] for i in range(N)])
-                    gx, gy = cd[:, 0], cd[:, 1]
-                else:
-                    gx, gy = lons, lats
-                px = (gx - gt[0]) / gt[1]
-                py = (gy - gt[3]) / gt[5]
-                c0 = max(0, int(np.floor(px.min())) - 2)
-                r0 = max(0, int(np.floor(py.min())) - 2)
-                c1 = min(ds.RasterXSize - 1, int(np.ceil(px.max())) + 2)
-                r1 = min(ds.RasterYSize - 1, int(np.ceil(py.max())) + 2)
-                w, h = c1 - c0 + 1, r1 - r0 + 1
-                arr = band.ReadAsArray(c0, r0, w, h).astype(np.float64)
-                if nodata is not None:
-                    arr[arr == nodata] = np.nan
-                ds = None
-                lx, ly = px - c0, py - r0
-                x0 = np.clip(np.floor(lx).astype(int), 0, w - 2)
-                y0 = np.clip(np.floor(ly).astype(int), 0, h - 2)
-                fx, fy = lx - x0, ly - y0
-                elev = (arr[y0, x0] * (1 - fx) * (1 - fy) + arr[y0, x0 + 1] * fx * (1 - fy) +
-                        arr[y0 + 1, x0] * (1 - fx) * fy + arr[y0 + 1, x0 + 1] * fx * fy)
-        except Exception as exc:
-            print(f"  GDAL failed ({exc}) - falling back")
-            elev = None
-
-    if elev is None:
-        from qgis.core import QgsRaster
-        from scipy.interpolate import interp1d
-        stride = max(1, int(CONFIG["dem_smooth_m"] / STEP))
-        idxs = list(range(0, N, stride))
-        if idxs[-1] != N - 1:
-            idxs.append(N - 1)
-        print(f"  Strategy: QGIS identify, {len(idxs)} samples")
-        xf = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"),
-                                    dem.crs(), QgsCoordinateTransformContext())
-        prov = dem.dataProvider()
-        sparse = np.full(len(idxs), np.nan)
-        for q, i in enumerate(idxs):
-            lon, lat = to_lonlat(xs_r[i], ys_r[i])
-            res = prov.identify(xf.transform(QgsPointXY(lon, lat)),
-                                QgsRaster.IdentifyFormatValue).results().get(1)
-            if res is not None and res == res:
-                sparse[q] = float(res)
-        if np.isnan(sparse).all():
-            warn("MODEL_LIMITATION", "DEM all nodata - treating as flat")
-            return None
-        ok = ~np.isnan(sparse)
-        sparse = np.interp(np.arange(len(idxs)), np.where(ok)[0], sparse[ok])
-        elev = interp1d(chain_m[idxs], sparse, kind="cubic",
-                        fill_value="extrapolate")(chain_m)
-
-    nan = np.isnan(elev)
-    if nan.any():
-        if (~nan).sum() < 4:
-            warn("MODEL_LIMITATION", "DEM mostly nodata - treating as flat")
-            return None
-        elev[nan] = np.interp(np.flatnonzero(nan), np.flatnonzero(~nan), elev[~nan])
-
-    wpts = max(3, int(CONFIG["dem_smooth_m"] / STEP))
-    elev_s = uniform_filter1d(elev, size=wpts)
-    g_raw = np.gradient(elev_s, chain_m)
-    gmax = CONFIG["dem_max_grade_pct"] / 100.0
-    n_clip = int(np.sum(np.abs(g_raw) > gmax))
-    g = np.clip(g_raw, -gmax, gmax)
-    print(f"  Elevation {elev_s.min():.0f}-{elev_s.max():.0f} m, "
-          f"grade {g.min()*100:+.2f}% to {g.max()*100:+.2f}%")
-    if n_clip:
-        warn("MODEL_LIMITATION",
-             f"{n_clip} DEM grade points clipped at +/-{CONFIG['dem_max_grade_pct']}%; "
-             f"surface DEMs misread cuttings, embankments, bridges and tunnels")
+    breakpoints.sort()
+    bp_chain = np.array([b[0] for b in breakpoints])
+    bp_grade = np.array([b[1] for b in breakpoints])
+    idx = np.clip(np.searchsorted(bp_chain, chain_m, side="right") - 1, 0, len(bp_grade) - 1)
+    g = bp_grade[idx]
+    print(f"  {len(breakpoints)} breakpoint(s) from {path}")
+    print(f"  Grade {g.min()*100:+.2f}% to {g.max()*100:+.2f}%")
     return g
 
 
-print(f"\n[7/11] Grade")
 grade = None
-if use_dem:
-    grade = sample_dem()
+if CONFIG.get("grade_csv"):
+    grade = sample_grade_csv(CONFIG["grade_csv"])
 if grade is None:
-    use_dem = False
     grade = np.full(N, CONFIG["grade_pct"] / 100.0)
     print(f"  Constant grade {CONFIG['grade_pct']:+.2f}%")
+    warn("MODEL_LIMITATION", "no real grade profile in use for most of this route; "
+                              "flat/constant grade is the largest source of error "
+                              "on ungraded stretches")
 
 
 # ------------------------------------------------------------
@@ -859,7 +648,6 @@ r_needed = (VMAX ** 2 * EB) / (G * (CANT + ED) / 1000.0)
 print(f"  Cant base e = {EB*1000:.0f} mm (EN 13803), cant {CANT:.0f} + deficiency {ED:.0f}")
 print(f"  R required for {CONFIG['v_max_kmh']:.0f} km/h: {r_needed:.0f} m")
 
-# --- reverse curves: measure the TANGENT GAP ---
 QUAL = CONFIG["rev_curve_qualify_r"]
 D_RATE = CONFIG["cant_rate_mms"]
 I_RATE = CONFIG["cant_def_rate_mms"]
@@ -872,7 +660,6 @@ for i in range(1, N):
         if radii[max(0, i - 5)] < QUAL and radii[min(N - 1, i + 5)] < QUAL:
             rev_zones.append(i)
 
-# cluster
 clustered = []
 for z in rev_zones:
     if clustered and z - clustered[-1][-1] <= int(300 / STEP):
@@ -881,19 +668,8 @@ for z in rev_zones:
         clustered.append([z])
 
 
-def opt_cant(R, v_ms):
-    if R >= 4000:
-        return 0.0
-    return min((v_ms ** 2 * EB / (R * G)) * 1000.0, CANT)
-
-
 def min_cant(R, v_ms):
-    """Least applied cant that keeps deficiency within ED at speed v on radius R.
-
-    A designer facing a constrained reversal reduces cant rather than running
-    equilibrium cant, because less cant means less to ramp. Using equilibrium
-    cant here overstates the excursion and understates the permissible speed.
-    """
+    """Least applied cant that keeps deficiency within ED at speed v on radius R."""
     if R >= 4000:
         return 0.0
     need = (v_ms ** 2 * EB / (R * G)) * 1000.0 - ED
@@ -905,10 +681,6 @@ for zone in clustered:
     i_rev = int(np.mean(zone))
     i_rev = max(1, min(i_rev, N - 2))
 
-    # The sign change happens IN the tangent between the two curves, so
-    # radii[i_rev] is large here. Walk outward WHILE STRAIGHT to measure that
-    # tangent: it is the distance available to ramp cant from one side to the
-    # other, and it is what limits speed at a reversal.
     j = i_rev
     while j > 0 and radii[j] >= QUAL:
         j -= 1
@@ -919,12 +691,9 @@ for zone in clustered:
     hi = j - 1
     L_avail = max((hi - lo + 1) * STEP, STEP)
 
-    # Radii of the two circular curves flanking the tangent
     R_l = float(radii[max(0, lo - 1)])
     R_r = float(radii[min(N - 1, hi + 1)])
-    R_min = min(R_l, R_r)
 
-    # Solve jointly: highest v whose required cant ramps within L_avail.
     def transition_ok(v):
         d_l = min_cant(R_l, v)
         d_r = min_cant(R_r, v)
@@ -1039,12 +808,11 @@ if TT in ("emu", "dmu"):
 else:
     DA, DB, DC = 2.5, 0.010, 8.0
 V_TRANS = POWER / TE_MAX
-CURVE_RES_K = 700.0     # N per kN of weight, times 1/R (Roeckl-style)
+CURVE_RES_K = 700.0
 
 
 def resistance_n(v_ms, grade_frac=0.0, radius_m=R_CAP):
     v_kmh = v_ms * 3.6
-    # A and B scale with mass; C is a vehicle geometry term and does not.
     r_roll = (MASS / 1000.0) * (DA + DB * v_kmh)
     r_aero = DC * (v_kmh / 100.0) ** 2 * 1000.0
     r_curve = (MASS / 1000.0) * (CURVE_RES_K / max(radius_m, 100.0))
@@ -1070,7 +838,6 @@ print(f"  Decel cap {B_CAP} m/s2, curve resistance on")
 
 if TRAIN_L > 0:
     Lp = max(1, int(round(TRAIN_L / STEP)))
-    # rolling minimum over the whole train length, trailing
     vp_eff = minimum_filter1d(vp, size=Lp + 1, origin=(Lp // 2), mode="nearest")
     print(f"  Train length {TRAIN_L:.0f} m -> {int(np.sum(vp_eff < vp))} pts tightened")
 else:
@@ -1096,9 +863,6 @@ def build_envelope(vperm, slen, stops, grd, rad):
             b = max_decel(max(vb[j + 1], 0.1), float(grd[i0 + j]), float(rad[i0 + j]))
             vb[j] = min(math.sqrt(max(0.0, vb[j + 1] ** 2 + 2 * b * d)), vperm[i0 + j], VMAX)
         env[i0:i1 + 1] = np.minimum(vf, vb)
-    # Points outside the stop span would otherwise stay at zero and be charged
-    # at the 0.1 m/s floor by cumulative_time. They are not on any train's
-    # journey, so hold the terminal values rather than leaving a speed of zero.
     if pts:
         env[:pts[0]] = vperm[:pts[0]]
         env[pts[-1] + 1:] = vperm[pts[-1] + 1:]
@@ -1115,11 +879,9 @@ def cumulative_time(env, slen):
 DWELL = CONFIG["dwell_s"]
 PAD = CONFIG["recovery"]
 
-# --- Train 1: increasing chainage ---
 env1 = build_envelope(vp_eff, seg_len, stop_indices, grade, radii)
 traw1 = cumulative_time(env1, seg_len)
 
-# --- Train 2: decreasing chainage. Grade sign MUST flip. ---
 vp_r = vp[::-1]
 vp_r_eff = (minimum_filter1d(vp_r, size=Lp + 1, origin=(Lp // 2), mode="nearest")
             if Lp > 0 else vp_r.copy())
@@ -1132,15 +894,6 @@ traw2 = cumulative_time(env2, slen_r)
 
 
 def schedule(traw, stn_idx_seq, stop_flags):
-    """Return padded offsets (s) at each listed station, plus total.
-
-    prev_t is baselined to the ORIGIN station rather than to zero. The speed
-    envelope is only built between the first and last stop, so if a terminal
-    does not project exactly to index 0 or N-1, the points beyond it would
-    otherwise be charged as running time before the train has departed. That
-    error is direction-dependent and would make one direction look several
-    minutes slower than the other on identical geometry.
-    """
     out = []
     prev_t = float(traw[stn_idx_seq[0]])
     acc = 0.0
@@ -1222,9 +975,8 @@ print("\n[10/11] Single-track meets")
 TAKT = CONFIG["takt_min"] * 60.0
 TURN = CONFIG["turnaround_min"] * 60.0
 
-# Physical-chainage time profiles, dwell included, padding applied.
+
 def physical_time_profile(traw, stops, forward):
-    """Seconds from origin to reach each physical index."""
     stop_set = sorted(set(stops))
     dwell_before = np.zeros(N)
     run = 0.0
@@ -1233,7 +985,6 @@ def physical_time_profile(traw, stops, forward):
         dwell_before[i] = run
         if i in interior:
             run += DWELL
-    # Baseline to the origin stop, for the same reason as in schedule().
     t = (traw - float(traw[stop_set[0]])) * (1.0 + PAD) + dwell_before
     t = np.maximum(t, 0.0)
     if forward:
@@ -1246,7 +997,6 @@ def physical_time_profile(traw, stops, forward):
 t1_phys = physical_time_profile(traw1, stop_indices, True)
 t2_phys = physical_time_profile(traw2, stops_r, False)
 
-# g(i) is monotonic increasing; meets occur where g = offset + j*TAKT
 g_fun = t1_phys - t2_phys
 offset0 = BASE2 - BASE1
 
@@ -1266,7 +1016,6 @@ def meets_for_offset(offset):
                     "radius_m": float(radii[i]),
                     "grade_pct": float(grade[i]) * 100.0,
                     "speed_kmh": float(min(env1[i], env2[N - 1 - i])) * 3.6})
-    # cluster
     out.sort(key=lambda m: m["km"])
     clus = []
     for m in out:
@@ -1277,7 +1026,6 @@ def meets_for_offset(offset):
 
 
 def site_score(meets):
-    """Lower is better: penalise tight radius and steep grade at the loop."""
     s = 0.0
     for m in meets:
         if m["radius_m"] < 600:
@@ -1350,10 +1098,6 @@ if CONFIG["rank_curve_time_loss"] and curves:
         if b <= a:
             continue
         base_t = leg_time(vp_eff, a, b)
-        # Relax from the UNFILTERED permissible speed, then apply the
-        # train-length filter once. Relaxing the already-filtered array and
-        # filtering again would spread restrictions wider than the baseline
-        # and make relaxed curves look slower than unrelaxed ones.
         relaxed = vp.copy()
         relaxed[c["i0"]:c["i1"] + 1] = VMAX
         if Lp > 0:
@@ -1378,13 +1122,13 @@ else:
 
 
 # ------------------------------------------------------------
-# 13. Outputs
+# 13. Outputs (CSV only -- no QGIS memory layers outside QGIS)
 # ------------------------------------------------------------
 label = CONFIG["run_label"]
 outdir = _outdir_str
 
+
 def write_csv_outputs():
-    """CSV export. Skipped entirely in scratch mode."""
     tt_path = os.path.join(outdir, f"{label}_timetable.csv")
     with open(tt_path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
@@ -1447,81 +1191,7 @@ def write_csv_outputs():
 if WRITE_FILES:
     write_csv_outputs()
 else:
-    print("\n  Scratch mode - no CSVs written (output_dir is None).")
-    print("  Results are in the memory layers below; nothing saved to disk.")
-
-# --- QGIS layers ---
-pf = QgsFields()
-for nm, tp in [("rank", QVariant.Int), ("min_r_m", QVariant.Int),
-               ("perm_kmh", QVariant.Double), ("length_m", QVariant.Int),
-               ("start_km", QVariant.Double), ("loss_s", QVariant.Double)]:
-    pf.append(QgsField(nm, tp))
-vl = QgsVectorLayer("Point?crs=EPSG:4326", f"{label}_curves", "memory")
-pr = vl.dataProvider(); pr.addAttributes(pf); vl.updateFields()
-feats = []
-for k, c in enumerate(ranked, 1):
-    ft = QgsFeature()
-    ft.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(c["track_lon"], c["track_lat"])))
-    ft.setAttributes([k, c["min_r"], c["perm_kmh"], c["length_m"],
-                      c["start_km"], c.get("loss_s", 0.0)])
-    feats.append(ft)
-pr.addFeatures(feats); vl.updateExtents()
-QgsProject.instance().addMapLayer(vl)
-print(f"  Layer '{label}_curves' added (graduate on loss_s)")
-
-lf = QgsFields()
-for nm, tp in [("loop", QVariant.Int), ("km", QVariant.Double),
-               ("radius_m", QVariant.Int), ("grade_pct", QVariant.Double),
-               ("min_len_km", QVariant.Double), ("site_ok", QVariant.Int)]:
-    lf.append(QgsField(nm, tp))
-vll = QgsVectorLayer("Point?crs=EPSG:4326", f"{label}_loops", "memory")
-prl = vll.dataProvider(); prl.addAttributes(lf); vll.updateFields()
-lfeats = []
-for k, m in enumerate(best["meets"], 1):
-    v = max(m["speed_kmh"], 40.0)
-    loop_m = 2.0 * (v / 3.6) * CONFIG["punctuality_s"] + 2 * TRAIN_L
-    lon, lat = to_lonlat(xs_r[m["idx"]], ys_r[m["idx"]])
-    ft = QgsFeature()
-    ft.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
-    ft.setAttributes([k, round(m["km"], 3), int(m["radius_m"]),
-                      round(m["grade_pct"], 2), round(loop_m / 1000, 2),
-                      int(m["radius_m"] >= 600 and abs(m["grade_pct"]) <= 1.0)])
-    lfeats.append(ft)
-prl.addFeatures(lfeats); vll.updateExtents()
-QgsProject.instance().addMapLayer(vll)
-print(f"  Layer '{label}_loops' added")
-
-SUB = 5
-sf = QgsFields()
-for nm, tp in [("perm_kmh", QVariant.Double), ("perm_eff_kmh", QVariant.Double),
-               ("env_t1_kmh", QVariant.Double), ("env_t2_kmh", QVariant.Double),
-               ("radius_m", QVariant.Double), ("km_start", QVariant.Double),
-               ("grade_pct", QVariant.Double)]:
-    sf.append(QgsField(nm, tp))
-vls = QgsVectorLayer("LineString?crs=EPSG:4326", f"{label}_speed", "memory")
-prs = vls.dataProvider(); prs.addAttributes(sf); vls.updateFields()
-sfeats = []
-env2_phys = env2[::-1]
-for i in range(0, N - SUB, SUB):
-    i1 = i + SUB
-    pts = [QgsPointXY(*to_lonlat(xs_r[k], ys_r[k])) for k in range(i, min(i1 + 1, N))]
-    if len(pts) < 2:
-        continue
-    ft = QgsFeature()
-    ft.setGeometry(QgsGeometry.fromPolylineXY(pts))
-    ft.setAttributes([
-        round(float(np.mean(vp[i:i1 + 1])) * 3.6, 1),
-        round(float(np.mean(vp_eff[i:i1 + 1])) * 3.6, 1),
-        round(float(np.mean(env1[i:i1 + 1])) * 3.6, 1),
-        round(float(np.mean(env2_phys[i:i1 + 1])) * 3.6, 1),
-        round(float(np.mean(radii[i:i1 + 1])), 1),
-        round(float(chain_m[i]) / 1000, 3),
-        round(float(np.mean(grade[i:i1 + 1])) * 100, 3),
-    ])
-    sfeats.append(ft)
-prs.addFeatures(sfeats); vls.updateExtents()
-QgsProject.instance().addMapLayer(vls)
-print(f"  Layer '{label}_speed' added")
+    print("\n  No output_dir set - nothing written to disk.")
 
 if WARNINGS and WRITE_FILES:
     wp = os.path.join(outdir, f"{label}_warnings.csv")
@@ -1539,7 +1209,7 @@ print(f"  cant {CANT:.0f} + def {ED:.0f} on {EB*1000:.0f} mm base | {TT.upper()}
 print("  Model intent: geometric potential of the right-of-way.")
 print("  Excludes civil limits, yard limits, signalling headway, freight paths.")
 print()
-print("  Written by Brendan Dawe. CC BY-NC 4.0 -- free for personal, educational")
-print("  and research use with attribution. Professional/organizational use:")
-print("  please reach out first. https://creativecommons.org/licenses/by-nc/4.0/")
+print("  Original script by Brendan Dawe. CC BY-NC 4.0 -- free for personal,")
+print("  educational and research use with attribution. Professional/organizational")
+print("  use: please contact the original author. https://creativecommons.org/licenses/by-nc/4.0/")
 print("=" * 64)
