@@ -170,8 +170,7 @@ def write_grade_csv(name: str, breakpoints: list[tuple[float, float]], comment: 
     with open(path, "w") as f:
         f.write(comment)
         f.write("chainage_km,grade_pct\n")
-        for km, pct in breakpoints:
-            f.write(f"{km:.3f},{pct}\n")
+        f.writelines(f"{km:.3f},{pct}\n" for km, pct in breakpoints)
     print(f"  Grade:    {path}")
 
 
