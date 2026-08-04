@@ -289,6 +289,21 @@ class Curve(TypedDict):
     loss_s: float
 
 
+class Meet(TypedDict):
+    idx: int
+    km: float
+    radius_m: float
+    grade_pct: float
+    speed_kmh: float
+
+
+class Best(TypedDict):
+    offset: float
+    meets: list[Meet]
+    score: float
+    n: int
+
+
 # ------------------------------------------------------------
 # 0. Config validation - fail fast, before any computation
 # ------------------------------------------------------------
@@ -309,7 +324,10 @@ else:
         _missing = [c for c in ("name", "lat", "lon") if c not in _hdr]
         if _missing:
             _errors.append(f"stations_csv missing column(s): {', '.join(_missing)}")
-    except Exception as _exc:
+    # Deliberately broad: this is startup validation, meant to turn ANY
+    # read/parse failure into a friendly _errors entry instead of a raw
+    # traceback, not to handle one specific expected exception type.
+    except Exception as _exc:  # noqa: BLE001
         _errors.append(f"stations_csv unreadable: {_exc}")
 
 _grade_csv = CONFIG.get("grade_csv")
@@ -637,7 +655,7 @@ kappa = np.where(denom > 1e-12, (dx * ddy - dy * ddx) / denom, 0.0)
 if flipped:
     kappa = -kappa
 
-W_CURV = max(1, int(round(CONFIG["curv_smooth_m"] / STEP)))
+W_CURV = max(1, round(CONFIG["curv_smooth_m"] / STEP))
 kappa_s = uniform_filter1d(kappa, size=W_CURV)
 
 R_CAP = 5000.0
@@ -663,7 +681,7 @@ if radii.min() < 50:
 # ------------------------------------------------------------
 # 7. Grade (from CSV breakpoints instead of a QGIS DEM layer)
 # ------------------------------------------------------------
-print(f"\n[7/11] Grade")
+print("\n[7/11] Grade")
 
 
 def sample_grade_csv(path: str) -> np.ndarray | None:
@@ -693,16 +711,18 @@ def sample_grade_csv(path: str) -> np.ndarray | None:
     return g
 
 
-grade: np.ndarray | None = None
-if CONFIG.get("grade_csv"):
-    grade = sample_grade_csv(CONFIG["grade_csv"])
-if grade is None:
-    grade = np.full(N, CONFIG["grade_pct"] / 100.0)
+def resolve_grade() -> np.ndarray:
+    g = sample_grade_csv(CONFIG["grade_csv"]) if CONFIG.get("grade_csv") else None
+    if g is not None:
+        return g
     print(f"  Constant grade {CONFIG['grade_pct']:+.2f}%")
     warn("MODEL_LIMITATION", "no real grade profile in use for most of this route; "
                               "flat/constant grade is the largest source of error "
                               "on ungraded stretches")
-assert grade is not None  # narrows for mypy at every later use, incl. inside closures below
+    return np.full(N, CONFIG["grade_pct"] / 100.0)
+
+
+grade = resolve_grade()  # single np.ndarray-returning assignment: no Optional to narrow later
 
 
 # ------------------------------------------------------------
@@ -775,7 +795,15 @@ for zone in clustered:
     R_l = float(radii[max(0, lo - 1)])
     R_r = float(radii[min(N - 1, hi + 1)])
 
-    def transition_ok(v: float) -> tuple[bool, str]:
+    def transition_ok(
+        v: float, R_l: float = R_l, R_r: float = R_r, L_avail: float = L_avail,
+    ) -> tuple[bool, str]:
+        # R_l/R_r/L_avail as defaults, not closed over: this is redefined fresh
+        # each iteration and only ever called within that same iteration below,
+        # so it's already correct either way, but pinning the values as
+        # defaults (evaluated at definition time) makes that true by
+        # construction rather than by "nothing reassigns them before the next
+        # call" -- and satisfies the loop-variable-closure linter honestly.
         d_l = min_cant(R_l, v)
         d_r = min_cant(R_r, v)
         dE = d_l + d_r
@@ -919,7 +947,7 @@ print(f"  Accel: {net_accel(1.0):.2f} / {net_accel(V_TRANS):.2f} / "
 print(f"  Decel cap {B_CAP} m/s2, curve resistance on")
 
 if TRAIN_L > 0:
-    Lp = max(1, int(round(TRAIN_L / STEP)))
+    Lp = max(1, round(TRAIN_L / STEP))
     vp_eff = minimum_filter1d(vp, size=Lp + 1, origin=(Lp // 2), mode="nearest")
     print(f"  Train length {TRAIN_L:.0f} m -> {int(np.sum(vp_eff < vp))} pts tightened")
 else:
@@ -1003,7 +1031,7 @@ arr2, tot2 = schedule(traw2, seq2, flag2)
 
 
 def fmt(sec: float) -> str:
-    m = int(round(sec / 60))
+    m = round(sec / 60)
     return f"{m//60}h{m%60:02d}m" if m >= 60 else f"{m}m"
 
 
@@ -1089,23 +1117,23 @@ g_fun = t1_phys - t2_phys
 offset0 = BASE2 - BASE1
 
 
-def meets_for_offset(offset: float) -> list[dict]:
+def meets_for_offset(offset: float) -> list[Meet]:
     lo, hi = float(g_fun[0]), float(g_fun[-1])
-    out: list[dict] = []
-    jmin = int(math.floor((lo - offset) / TAKT)) - 1
-    jmax = int(math.ceil((hi - offset) / TAKT)) + 1
+    out: list[Meet] = []
+    jmin = math.floor((lo - offset) / TAKT) - 1
+    jmax = math.ceil((hi - offset) / TAKT) + 1
     for j in range(jmin, jmax + 1):
         target = offset + j * TAKT
         if target < lo or target > hi:
             continue
         i = int(np.searchsorted(g_fun, target))
         i = max(1, min(i, N - 1))
-        out.append({"idx": i, "km": float(chain_m[i]) / 1000.0,
-                    "radius_m": float(radii[i]),
-                    "grade_pct": float(grade[i]) * 100.0,
-                    "speed_kmh": float(min(env1[i], env2[N - 1 - i])) * 3.6})
+        out.append(Meet(idx=i, km=float(chain_m[i]) / 1000.0,
+                         radius_m=float(radii[i]),
+                         grade_pct=float(grade[i]) * 100.0,
+                         speed_kmh=float(min(env1[i], env2[N - 1 - i])) * 3.6))
     out.sort(key=lambda m: m["km"])
-    clus: list[dict] = []
+    clus: list[Meet] = []
     for m in out:
         if clus and m["km"] - clus[-1]["km"] < CONFIG["loop_cluster_km"]:
             continue
@@ -1113,7 +1141,7 @@ def meets_for_offset(offset: float) -> list[dict]:
     return clus
 
 
-def site_score(meets: list[dict]) -> float:
+def site_score(meets: list[Meet]) -> float:
     s = 0.0
     for m in meets:
         if m["radius_m"] < 600:
@@ -1132,14 +1160,14 @@ print(f"  Takt {CONFIG['takt_min']} min -> meets every {CONFIG['takt_min']/2:.0f
       f"of running time")
 print(f"  Loops required at current phasing: {len(base_meets)}")
 
-best = {"offset": offset0, "meets": base_meets,
-        "score": site_score(base_meets), "n": len(base_meets)}
+best: Best = Best(offset=offset0, meets=base_meets,
+                   score=site_score(base_meets), n=len(base_meets))
 if CONFIG["meet_phase_sweep"]:
     for dt in range(0, int(TAKT), 60):
         cand = meets_for_offset(offset0 + dt)
         sc = site_score(cand)
         if (len(cand), sc) < (best["n"], best["score"]):
-            best = {"offset": offset0 + dt, "meets": cand, "score": sc, "n": len(cand)}
+            best = Best(offset=offset0 + dt, meets=cand, score=sc, n=len(cand))
     shift = (best["offset"] - offset0) / 60.0
     if abs(shift) > 0.5:
         print(f"  Best phasing: shift Train 2 by {shift:+.0f} min "
@@ -1158,7 +1186,7 @@ for m in best["meets"]:
           f"{v:>7.0f} {loop_m/1000:>9.2f} km{flag}")
 
 round_trip = tot1 + tot2 + 2 * TURN
-n_sets = max(1, int(math.ceil(round_trip / TAKT)))
+n_sets = max(1, math.ceil(round_trip / TAKT))
 slack = n_sets * TAKT - round_trip
 to_drop = round_trip - (n_sets - 1) * TAKT if n_sets > 1 else None
 print(f"\n  Round trip {fmt(round_trip)} (incl. {CONFIG['turnaround_min']} min turnarounds)")
@@ -1286,8 +1314,8 @@ if WARNINGS and WRITE_FILES:
     with open(wp, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["type", "message"])
-        for k, m in WARNINGS:
-            w.writerow([k, m])
+        for kind, msg in WARNINGS:
+            w.writerow([kind, msg])
     print(f"  Warnings CSV:  {wp}")
 
 print("\n" + "=" * 64)
