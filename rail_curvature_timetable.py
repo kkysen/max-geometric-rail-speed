@@ -222,7 +222,6 @@ ROUTE_META: dict[Route, tuple[str, str]] = {
 
 def _select_route(
     route: Route = typer.Argument(
-        Route.coney_island_times_sq,
         help="Which of scripts/prepare_route.py's prepared routes to run.",
     ),
 ) -> None:

@@ -37,9 +37,9 @@ uv run rail_curvature_timetable.py dekalb_times_sq
 uv run rail_curvature_timetable.py dekalb_bryant_park
 ```
 
-The route argument selects which of `prepare_route.py`'s prepared routes to run (overrides
-`CONFIG["track_geojson"]`/`stations_csv`/`grade_csv`/`run_label`); omit it to use whatever
-`CONFIG` is hardcoded to (`coney_island_times_sq` by default). Each writes `output/<run_label>_*.csv`.
+The route argument is required -- it selects which of `prepare_route.py`'s prepared routes to run,
+overriding `CONFIG["track_geojson"]`/`stations_csv`/`grade_csv`/`run_label`. Each writes
+`output/<run_label>_*.csv`.
 
 The Brooklyn leg of `coney_island_times_sq` models Brighton **Express** (the real B train's
 stopping pattern, extended south to Coney Island since the B itself terminates at Brighton Beach):
